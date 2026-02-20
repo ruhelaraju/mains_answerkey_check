@@ -1,0 +1,185 @@
+from flask import Blueprint, request, render_template_string
+import sqlite3, requests
+from bs4 import BeautifulSoup
+
+# 1. Blueprint Definition
+main_bp = Blueprint('main_bp', __name__)
+
+# 2. Database Helper
+def init_db():
+    conn = sqlite3.connect('ssc_data.db')
+    cursor = conn.cursor()
+    cursor.execute('''CREATE TABLE IF NOT EXISTS results 
+                      (roll_no TEXT PRIMARY KEY, name TEXT, score REAL, 
+                       category TEXT, shift TEXT, exam_date TEXT, venue TEXT, comp_score REAL)''')
+    conn.commit()
+    conn.close()
+
+# 3. HTML Templates
+LEADERBOARD_PAGE = '''
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Global Leaderboard</title>
+    <style>
+        body { font-family: 'Segoe UI', sans-serif; background: #f4f7f6; padding: 40px; text-align: center; }
+        .card { max-width: 800px; margin: auto; background: white; padding: 30px; border-radius: 15px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); }
+        table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+        th, td { padding: 12px; border-bottom: 1px solid #eee; text-align: left; }
+        th { background: #007bff; color: white; }
+        .back-link { display: inline-block; margin-top: 20px; text-decoration: none; color: #007bff; font-weight: bold; }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <h1>🏆 Top 10 Scorers</h1>
+        <table>
+            <tr><th>Rank</th><th>Name</th><th>Score</th><th>Category</th><th>Shift</th></tr>
+            {% for p in players %}
+            <tr><td>{{ loop.index }}</td><td>{{ p[0] }}</td><td>{{ p[1] }}</td><td>{{ p[2] }}</td><td>{{ p[3] }}</td></tr>
+            {% endfor %}
+        </table>
+        <a href="/main/" class="back-link">← Back to Checker</a>
+    </div>
+</body>
+</html>
+'''
+
+HTML_PAGE = '''
+<!DOCTYPE html>
+<html>
+<head>
+    <title>SSC Pro Rank Checker</title>
+    <style>
+        @media print { form, .print-hide { display: none !important; } .container { box-shadow: none; border: none; } }
+        body { font-family: 'Segoe UI', sans-serif; background: #f4f7f6; padding: 20px; }
+        .container { max-width: 1000px; margin: auto; background: white; padding: 25px; border-radius: 15px; box-shadow: 0 4px 20px rgba(0,0,0,0.1); }
+        .rank-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 15px; margin: 20px 0; }
+        .rank-card { background: #fff; padding: 15px; border-radius: 10px; text-align: center; border: 1px solid #dee2e6; }
+        .percentile { font-size: 12px; color: #28a745; font-weight: bold; }
+        .total-box { background: #28a745; color: white; padding: 15px; border-radius: 10px; text-align: center; margin-bottom: 20px; }
+        .print-btn { background: #6c757d; color: white; padding: 10px 20px; border: none; border-radius: 5px; cursor: pointer; }
+        table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+        th, td { border: 1px solid #eee; padding: 12px; text-align: left; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div style="display: flex; justify-content: space-between;" class="print-hide">
+            <h2>SSC Advanced Analytics</h2>
+            <a href="/main/leaderboard" style="color: #007bff; text-decoration: none; font-weight: bold;">View Leaderboard →</a>
+        </div>
+        <form method="POST" class="print-hide">
+            <input type="text" name="url" placeholder="Paste Answer Key Link" style="width:60%; padding:12px;" required>
+            <select name="category" style="padding:12px;">
+                <option value="UR">UR</option><option value="OBC">OBC</option>
+                <option value="EWS">EWS</option><option value="SC">SC</option><option value="ST">ST</option>
+            </select>
+            <button type="submit" style="padding:12px 25px; background:#007bff; color:white; border:none; border-radius:5px; cursor:pointer;">Analyze</button>
+        </form>
+
+        {% if d %}
+        <div style="margin-top:20px;">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+                <h3>Candidate: {{ d.name }}</h3>
+                <button onclick="window.print()" class="print-btn print-hide">Download PDF</button>
+            </div>
+            
+            <div class="total-box">
+                <h3 style="margin:0;">Final Total Score (Subject 1-4)</h3>
+                <h1 style="margin:5px 0;">{{ d.score }} / 390</h1>
+            </div>
+
+            <div class="rank-grid">
+                <div class="rank-card"><h3>Overall Rank</h3><h2>{{ d.ranks.overall }} / {{ d.totals.overall }}</h2><div class="percentile">{{ d.perc.overall }}%ile</div></div>
+                <div class="rank-card"><h3>Category Rank</h3><h2>{{ d.ranks.cat }} / {{ d.totals.cat }}</h2><div class="percentile">{{ d.perc.cat }}%ile</div></div>
+                <div class="rank-card"><h3>Shift Rank</h3><h2>{{ d.ranks.shift }} / {{ d.totals.shift }}</h2><div class="percentile">{{ d.perc.shift }}%ile</div></div>
+                <div class="rank-card"><h3>Comp Rank</h3><h2>{{ d.ranks.comp if d.is_comp else 'N/A' }}</h2></div>
+                <div class="rank-card"><h3>CPT Rank</h3><h2>{{ d.ranks.cpt if d.is_cpt else 'N/A' }}</h2></div>
+            </div>
+
+            <table>
+                <tr><th>Subject</th><th>Correct</th><th>Wrong</th><th>Left</th><th>Score</th></tr>
+                {% for sub, v in d.subs.items() %}
+                <tr><td>{{ sub }}</td><td>{{ v.c }}</td><td>{{ v.w }}</td><td>{{ v.l }}</td><td><b>{{ v.m }}</b></td></tr>
+                {% endfor %}
+            </table>
+        </div>
+        {% endif %}
+    </div>
+</body>
+</html>
+'''
+
+# 4. Main Route Logic
+@main_bp.route('/', methods=['GET', 'POST'])
+def main_home():
+    init_db()
+    data = None
+    if request.method == 'POST':
+        url, cat = request.form.get('url'), request.form.get('category')
+        comp_t = 18 if cat=="UR" else (15 if cat in ["OBC","EWS"] else 12)
+        cpt_t = 27 if cat=="UR" else (24 if cat in ["OBC","EWS"] else 21)
+        try:
+            res = requests.get(url)
+            soup = BeautifulSoup(res.text, 'html.parser')
+            info_tds = soup.find_all('td')
+            info = {info_tds[i].text.strip(): info_tds[i+1].text.strip() for i in range(len(info_tds)-1) if info_tds[i].text.strip() in ["Roll Number", "Candidate Name", "Exam Time", "Exam Date", "Test Center Name"]}
+            
+            qs = soup.find_all(class_='question-pnl')
+            subs = {f"Subject {i+1}": {"c":0,"w":0,"l":0,"m":0} for i in range(4)}
+            subs["Computer"] = {"c":0,"w":0,"l":0,"m":0}
+            merit, comp = 0, 0
+
+            for i, q in enumerate(qs):
+                sub = "Subject 1" if i<30 else ("Subject 2" if i<60 else ("Subject 3" if i<105 else ("Subject 4" if i<130 else "Computer")))
+                ans_el = q.find(class_='rightAns')
+                if not ans_el: continue
+                right = ans_el.text[0]
+                tds = q.find_all('td')
+                chosen = "--"
+                for j, r in enumerate(tds):
+                    if "Chosen Option" in r.text: chosen = tds[j+1].text.strip()
+                pt = 3 if chosen == right else (-1 if chosen != "--" else 0)
+                subs[sub]['c' if pt==3 else ('w' if pt==-1 else 'l')] += 1
+                subs[sub]['m'] += pt
+                if sub != "Computer": merit += pt
+                else: comp += pt
+
+            conn = sqlite3.connect('ssc_data.db')
+            cur = conn.cursor()
+            cur.execute("INSERT OR REPLACE INTO results VALUES (?,?,?,?,?,?,?,?)", (info.get("Roll Number"), info.get("Candidate Name"), merit, cat, info.get("Exam Time"), info.get("Exam Date"), info.get("Test Center Name"), comp))
+            conn.commit()
+
+            def get_stats(query, params):
+                cur.execute(query, params)
+                r = cur.fetchone()[0] + 1
+                base_q = query.replace("score > ?", "1").replace("comp_score >= ?", "1").split("WHERE")[0]
+                if "category" in query: base_q += " WHERE category = ?"
+                elif "shift" in query: base_q += " WHERE shift = ?"
+                cur.execute(base_q, (params[1],) if len(params)>1 else ())
+                t = cur.fetchone()[0]
+                p = round(((t - r) / (t - 1) * 100), 2) if t > 1 else 100.0
+                return r, t, p
+
+            ranks, totals, perc = {}, {}, {}
+            ranks['overall'], totals['overall'], perc['overall'] = get_stats("SELECT COUNT(*) FROM results WHERE score > ?", (merit,))
+            ranks['cat'], totals['cat'], perc['cat'] = get_stats("SELECT COUNT(*) FROM results WHERE score > ? AND category = ?", (merit, cat))
+            ranks['shift'], totals['shift'], perc['shift'] = get_stats("SELECT COUNT(*) FROM results WHERE score > ? AND shift = ?", (merit, info.get("Exam Time")))
+            cur.execute("SELECT COUNT(*) FROM results WHERE score > ? AND comp_score >= ?", (merit, comp_t))
+            ranks['comp'] = cur.fetchone()[0] + 1
+            cur.execute("SELECT COUNT(*) FROM results WHERE score > ? AND comp_score >= ?", (merit, cpt_t))
+            ranks['cpt'] = cur.fetchone()[0] + 1
+            conn.close()
+            data = {'name': info.get("Candidate Name"), 'shift': info.get("Exam Time"), 'subs': subs, 'score': merit, 'ranks': ranks, 'totals': totals, 'perc': perc, 'is_comp': comp >= comp_t, 'is_cpt': comp >= cpt_t}
+        except Exception as e: print("Error:", e)
+    return render_template_string(HTML_PAGE, d=data)
+
+@main_bp.route('/leaderboard')
+def leaderboard():
+    conn = sqlite3.connect('ssc_data.db')
+    cur = conn.cursor()
+    cur.execute("SELECT name, score, category, shift FROM results ORDER BY score DESC LIMIT 10")
+    players = cur.fetchall()
+    conn.close()
+    return render_template_string(LEADERBOARD_PAGE, players=players)
