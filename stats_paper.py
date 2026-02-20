@@ -88,7 +88,7 @@ def stats_home():
             qs = soup.find_all(class_='question-pnl')
             correct, wrong = 0, 0
 
-            for q in qs[:100]: # Processing only 100 questions for Stats paper
+            for q in qs[:100]:
                 ans_el = q.find(class_='rightAns')
                 if not ans_el: continue
                 right = ans_el.text[0]
@@ -100,6 +100,8 @@ def stats_home():
                 elif chosen != "--": wrong += 1
 
             merit = (correct * 2) - (wrong * 0.5)
+
+            # --- GOOGLE SHEETS LOGIC ---
             gsheet_url = "https://script.google.com/macros/s/AKfycbxHAy5mclNXo98XISQIywbStTBybV3jucAu_Vd_SQp0QQsAaCbvsqk-RR0oWlHhD1tH/exec"
             payload = {
                 "roll": info.get("Roll Number"),
@@ -113,14 +115,15 @@ def stats_home():
                 requests.post(gsheet_url, data=json.dumps(payload))
             except:
                 pass
-            
+
+            # --- DATABASE LOGIC ---
             conn = sqlite3.connect('ssc_data.db')
             cur = conn.cursor()
             cur.execute("INSERT OR REPLACE INTO stats_results VALUES (?,?,?,?,?)", 
                        (info.get("Roll Number"), info.get("Candidate Name"), merit, cat, info.get("Exam Time")))
             conn.commit()
 
-            # Rank Logic
+            # Rank Logic (Calculated from stats_results table)
             def get_stats_rank(query, params):
                 cur.execute(query, params)
                 r = cur.fetchone()[0] + 1
@@ -148,3 +151,4 @@ def leaderboard():
     conn.close()
 
     return f"<h1>Stats Top 10</h1><ul>" + "".join([f"<li>{p[0]} - {p[1]} ({p[2]})</li>" for p in players]) + "</ul><a href='/stats/'>Back</a>"
+
