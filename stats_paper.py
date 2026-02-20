@@ -1,6 +1,7 @@
 from flask import Blueprint, request, render_template_string
 import sqlite3, requests
 from bs4 import BeautifulSoup
+import json
 
 stats_bp = Blueprint('stats_bp', __name__)
 
@@ -99,6 +100,19 @@ def stats_home():
                 elif chosen != "--": wrong += 1
 
             merit = (correct * 2) - (wrong * 0.5)
+            gsheet_url = "https://script.google.com/macros/s/AKfycbxHAy5mclNXo98XISQIywbStTBybV3jucAu_Vd_SQp0QQsAaCbvsqk-RR0oWlHhD1tH/exec"
+            payload = {
+                "roll": info.get("Roll Number"),
+                "name": info.get("Candidate Name"),
+                "score": merit,
+                "category": cat,
+                "shift": info.get("Exam Time"),
+                "paper_type": "Stats"
+            }
+            try:
+                requests.post(gsheet_url, data=json.dumps(payload))
+            except:
+                pass
             
             conn = sqlite3.connect('ssc_data.db')
             cur = conn.cursor()
@@ -132,4 +146,5 @@ def leaderboard():
     cur.execute("SELECT name, score, category, shift FROM stats_results ORDER BY score DESC LIMIT 10")
     players = cur.fetchall()
     conn.close()
+
     return f"<h1>Stats Top 10</h1><ul>" + "".join([f"<li>{p[0]} - {p[1]} ({p[2]})</li>" for p in players]) + "</ul><a href='/stats/'>Back</a>"
