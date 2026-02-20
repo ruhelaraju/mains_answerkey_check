@@ -49,7 +49,10 @@ HOME_HTML = '''
 @app.route('/')
 def index():
     return render_template_string(HOME_HTML)
+import os
 
 if __name__ == '__main__':
-    print("🚀 Server starting on http://localhost:8080")
-    serve(app, host='0.0.0.0', port=8080)
+    # Render assigns a port dynamically via environment variables
+    port = int(os.environ.get("PORT", 8080)) 
+    print(f"🚀 Server starting on port {port}")
+    serve(app, host='0.0.0.0', port=port)
