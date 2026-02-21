@@ -1,8 +1,6 @@
 from flask import Blueprint, request, render_template_string
 import sqlite3, requests
 from bs4 import BeautifulSoup
-import json
-import re
 
 stats_bp = Blueprint('stats_bp', __name__)
 
@@ -74,20 +72,6 @@ HTML_PAGE_STATS = '''
 </html>
 '''
 
-
-
-def init_stats_db():
-    conn = sqlite3.connect('ssc_data.db')
-    cursor = conn.cursor()
-    cursor.execute('''CREATE TABLE IF NOT EXISTS stats_results 
-                      (roll_no TEXT PRIMARY KEY, name TEXT, score REAL, 
-                       category TEXT, shift TEXT)''')
-    conn.commit()
-    conn.close()
-
-# HTML_PAGE_STATS stays the same...
-HTML_PAGE_STATS = '''...'''
-
 @stats_bp.route('/', methods=['GET', 'POST'])
 def stats_home():
     init_stats_db()
@@ -97,60 +81,32 @@ def stats_home():
         try:
             res = requests.get(url)
             soup = BeautifulSoup(res.text, 'html.parser')
-            
-            # 1. Improved Info Extraction
             info_tds = soup.find_all('td')
             info = {info_tds[i].text.strip(): info_tds[i+1].text.strip() for i in range(len(info_tds)-1) if info_tds[i].text.strip() in ["Roll Number", "Candidate Name", "Exam Time"]}
             
-            # 2. Universal Scraper Logic (Fixes the 0 score issue)
-            qs = soup.find_all('div', class_='question-pnl') or soup.find_all('table', class_='question-pnl')
+            qs = soup.find_all(class_='question-pnl')
             correct, wrong = 0, 0
 
-            for q in qs[:100]: # Statistics usually has 100 questions
-                # Case-insensitive search for rightAns/rightans
-                ans_el = q.find(class_=re.compile('rightAns', re.I))
+            for q in qs[:100]: # Processing only 100 questions for Stats paper
+                ans_el = q.find(class_='rightAns')
                 if not ans_el: continue
-                
-                right = ans_el.text.strip()[0]
+                right = ans_el.text[0]
                 tds = q.find_all('td')
                 chosen = "--"
-                
                 for j, r in enumerate(tds):
-                    txt = r.text.strip()
-                    # Support for English and Hindi keys
-                    if "Chosen Option" in txt or "चयनित विकल्प" in txt:
-                        chosen = tds[j+1].text.strip()
-                
-                if chosen == right: 
-                    correct += 1
-                elif chosen != "--" and chosen != "None": 
-                    wrong += 1
+                    if "Chosen Option" in r.text: chosen = tds[j+1].text.strip()
+                if chosen == right: correct += 1
+                elif chosen != "--": wrong += 1
 
             merit = (correct * 2) - (wrong * 0.5)
-
-            # --- GOOGLE SHEETS LOGIC ---
-            gsheet_url = "https://script.google.com/macros/s/AKfycbxHAy5mclNXo98XISQIywbStTBybV3jucAu_Vd_SQp0QQsAaCbvsqk-RR0oWlHhD1tH/exec"
-            payload = {
-                "roll": info.get("Roll Number", "N/A"),
-                "name": info.get("Candidate Name", "Unknown"),
-                "score": merit,
-                "category": cat,
-                "shift": info.get("Exam Time", "N/A"),
-                "paper_type": "Stats"
-            }
-            try:
-                requests.post(gsheet_url, data=json.dumps(payload), timeout=5)
-            except:
-                pass
-
-            # --- DATABASE LOGIC ---
+            
             conn = sqlite3.connect('ssc_data.db')
             cur = conn.cursor()
             cur.execute("INSERT OR REPLACE INTO stats_results VALUES (?,?,?,?,?)", 
-                       (info.get("Roll Number", "N/A"), info.get("Candidate Name", "Unknown"), merit, cat, info.get("Exam Time", "N/A")))
+                       (info.get("Roll Number"), info.get("Candidate Name"), merit, cat, info.get("Exam Time")))
             conn.commit()
 
-            # Rank Logic Helper
+            # Rank Logic
             def get_stats_rank(query, params):
                 cur.execute(query, params)
                 r = cur.fetchone()[0] + 1
@@ -166,8 +122,7 @@ def stats_home():
             
             conn.close()
             data = {'name': info.get("Candidate Name"), 'score': merit, 'summary': {'c':correct, 'w':wrong}, 'ranks': ranks, 'totals': totals}
-        except Exception as e: 
-            print("Error in Stats Logic:", e)
+        except Exception as e: print("Error:", e)
     return render_template_string(HTML_PAGE_STATS, d=data)
 
 @stats_bp.route('/leaderboard')
@@ -178,5 +133,3 @@ def leaderboard():
     players = cur.fetchall()
     conn.close()
     return f"<h1>Stats Top 10</h1><ul>" + "".join([f"<li>{p[0]} - {p[1]} ({p[2]})</li>" for p in players]) + "</ul><a href='/stats/'>Back</a>"
-
-
