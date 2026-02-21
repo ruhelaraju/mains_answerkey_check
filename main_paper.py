@@ -137,10 +137,20 @@ def main_home():
                     info[k] = v
 
             # Universal Scraping Logic
-            qs = soup.find_all('div', class_='question-pnl') or soup.find_all('table', class_='question-pnl')
-            subs = {f"Subject {i+1}": {"c":0,"w":0,"l":0,"m":0} for i in range(4)}
-            subs["Computer"] = {"c":0,"w":0,"l":0,"m":0}
-            merit, comp = 0, 0
+            # Use this for a deeper search
+            # --- FIXED SCRAPING LOGIC ---
+            # We try the most common tags first, then fall back to deep search
+            qs = soup.find_all('div', class_=re.compile(r'question-pnl|section-it'))
+            
+            if not qs:
+                # Fallback: Search for tables containing question data if divs aren't found
+                qs = [t for t in soup.find_all('table') if "Question ID" in t.text]
+
+            # REMOVE the old line below from your code:
+            # qs = soup.find_all('div', class_='question-pnl') or soup.find_all('table', class_='question-pnl')
+            
+            print(f"DEBUG: Scraper found {len(qs)} questions") 
+            # ----------------------------
 
             for i, q in enumerate(qs):
                 sub = "Subject 1" if i<30 else ("Subject 2" if i<60 else ("Subject 3" if i<105 else ("Subject 4" if i<130 else "Computer")))
@@ -216,3 +226,4 @@ def leaderboard():
     players = cur.fetchall()
     conn.close()
     return render_template_string(LEADERBOARD_PAGE, players=players)
+
